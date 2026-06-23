@@ -54,6 +54,38 @@ BUILDER=debian ./build_on_krunvm.sh
 
 In general, `./build_on_krunvm.sh` will always delegate to `./build_on_krunvm_${BUILDER}.sh` so additional environments can be added like this if needed.
 
+### Windows
+
+#### Requirements
+* Docker Desktop for building the Linux kernel bundle.
+* Visual Studio Build Tools with the **Desktop development with C++** workload.
+
+#### Building the DLL
+The Linux kernel is built inside Docker using the existing Makefile flow. By default the script runs the Docker builder as `linux/amd64`, matching the current Windows x86_64 DLL/release path and the available SEV/TDX kernel configs. Windows then consumes the generated `kernel.c` bundle and links it into a native DLL with MSVC:
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
+```
+
+Use `-DockerPlatform` to select a different Linux builder platform when intentionally producing a different guest kernel architecture.
+
+If `kernel.c` already exists, skip the Docker step and only link/verify the DLL:
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -SkipKernelBundle
+```
+
+Build the SEV or TDX variants by selecting the variant explicitly:
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Variant sev
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Variant tdx
+```
+
+The scripts discover Visual Studio Build Tools with `vswhere` and initialize the MSVC environment automatically. If GNU `make` is available in the same MSVC-configured shell, `make WINDOWS_TOOLCHAIN=msvc` is also supported as a convenience wrapper. The native PowerShell scripts are the canonical Windows path.
+
+The generic Windows build exports `krunfw_get_kernel` and `krunfw_get_version`. SEV and TDX builds use `libkrunfw-tee.def`, bundle the matching qboot firmware and initrd, and also export `krunfw_get_qboot` and `krunfw_get_initrd`.
+
 ## Known limitations
 
 * To save memory, the embedded kernel is configured with ```CONFIG_NR_CPUS=8```, which limits the maximum number of supported CPUs to 8. If this kernel runs in a VM with more CPUs, only the first 8 will be initialized and used.

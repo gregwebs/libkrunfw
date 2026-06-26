@@ -9,7 +9,6 @@ param(
     [string[]] $ExpectedExports,
 
     [string] $BundleSection = ".krunfw",
-    [int] $SectionAlignment = 65536,
     [string] $Architecture = "",
     [string] $HostArchitecture = ""
 )
@@ -62,11 +61,6 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 $headersText = $headers -join "`n"
-
-$alignmentHex = "{0:x}" -f $SectionAlignment
-if ($headersText -notmatch "(?im)^\s*$alignmentHex\s+section alignment\s*$") {
-    throw "DLL section alignment is not $SectionAlignment bytes."
-}
 
 if ($headersText -notmatch [regex]::Escape($BundleSection)) {
     throw "Bundle section not found: $BundleSection"

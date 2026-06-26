@@ -4,7 +4,6 @@ param(
     [string] $ImportLibrary = "libkrunfw.lib",
     [string] $Definition = "libkrunfw.def",
     [string[]] $Sources = @("kernel.c"),
-    [int] $SectionAlignment = 65536,
     [string] $Architecture = "",
     [string] $HostArchitecture = ""
 )
@@ -43,8 +42,7 @@ $compileArgs = @(
     "/link",
     "/DEF:$Definition",
     "/IMPLIB:$ImportLibrary",
-    "/ALIGN:$SectionAlignment",
-    "/SECTION:.krunfw,R,ALIGN=$SectionAlignment"
+    "/SECTION:.krunfw,R"
 )
 
 & cl.exe @compileArgs

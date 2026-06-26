@@ -342,11 +342,14 @@ if (-not $SkipKernelBundle) {
     }
 
     $targets = $makeTargets -join " "
+    $makeJobs = [Math]::Max(1, [Environment]::ProcessorCount)
     $dockerCommand = @"
 set -euo pipefail
 dnf install -y 'dnf-command(builddep)' python3-pyelftools curl
 dnf builddep -y kernel
-build_dir="`$(mktemp -d /tmp/libkrunfw.XXXXXX)"
+build_dir=/tmp/libkrunfw-build
+rm -rf "`$build_dir"
+mkdir -p "`$build_dir"
 cleanup() {
     rm -rf "`$build_dir"
 }
@@ -377,7 +380,7 @@ tar --exclude='.git' \
 
 cd "`$build_dir"
 make $makeVariant $makeArch clean
-make -j"`$(nproc)" $makeVariant $makeArch $targets
+make -j$makeJobs $makeVariant $makeArch $targets
 for target in $targets; do
     cp "`$target" "/work/`$target"
 done

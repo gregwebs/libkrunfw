@@ -346,8 +346,45 @@ if (-not $SkipKernelBundle) {
 set -euo pipefail
 dnf install -y 'dnf-command(builddep)' python3-pyelftools curl
 dnf builddep -y kernel
+build_dir="`$(mktemp -d /tmp/libkrunfw.XXXXXX)"
+cleanup() {
+    rm -rf "`$build_dir"
+}
+trap cleanup EXIT
+
+cd /work
+tar --exclude='.git' \
+    --exclude='./.git' \
+    --exclude='kernel.c' \
+    --exclude='./kernel.c' \
+    --exclude='qboot.c' \
+    --exclude='./qboot.c' \
+    --exclude='initrd.c' \
+    --exclude='./initrd.c' \
+    --exclude='linux-*' \
+    --exclude='./linux-*' \
+    --exclude='*.dll' \
+    --exclude='./*.dll' \
+    --exclude='*.lib' \
+    --exclude='./*.lib' \
+    --exclude='*.exp' \
+    --exclude='./*.exp' \
+    --exclude='*.pdb' \
+    --exclude='./*.pdb' \
+    --exclude='*.obj' \
+    --exclude='./*.obj' \
+    -cf - . | tar -xf - -C "`$build_dir"
+
+cd "`$build_dir"
 make $makeVariant $makeArch clean
 make -j"`$(nproc)" $makeVariant $makeArch $targets
+for target in $targets; do
+    cp "`$target" "/work/`$target"
+done
+if [ -d tarballs ]; then
+    mkdir -p /work/tarballs
+    cp -a tarballs/. /work/tarballs/
+fi
 "@
     # PowerShell here-strings use CRLF on Windows, but Bash treats the CR as
     # part of tokens such as pipefail. Normalize before passing to bash -lc.

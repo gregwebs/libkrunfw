@@ -1,6 +1,7 @@
 KERNEL_VERSION = linux-6.12.91
-KERNEL_REMOTE = https://cdn.kernel.org/pub/linux/kernel/v6.x/$(KERNEL_VERSION).tar.xz
-KERNEL_TARBALL = tarballs/$(KERNEL_VERSION).tar.xz
+# Fetch stable snapshots directly so HTTP errors are visible instead of cached as tarballs.
+KERNEL_REMOTE = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/snapshot/$(KERNEL_VERSION).tar.gz
+KERNEL_TARBALL = tarballs/$(KERNEL_VERSION).tar.gz
 KERNEL_SOURCES = $(KERNEL_VERSION)
 KERNEL_PATCHES = $(shell find patches/ -name "0*.patch" | sort)
 KERNEL_C_BUNDLE = kernel.c
@@ -12,21 +13,37 @@ TIMESTAMP = "Mon Jun  1 16:28:39 CEST 2026"
 KERNEL_FLAGS = KBUILD_BUILD_TIMESTAMP=$(TIMESTAMP)
 KERNEL_FLAGS += KBUILD_BUILD_USER=root
 KERNEL_FLAGS += KBUILD_BUILD_HOST=libkrunfw
+KERNEL_FLAGS += KBUILD_BUILD_VERSION=1
 
 ifeq ($(SEV),1)
     VARIANT = -sev
     KERNEL_PATCHES += $(shell find patches-tee/ -name "0*.patch" | sort)
+    WINDOWS_DEF_VARIANT = -tee
 endif
 ifeq ($(TDX),1)
     VARIANT = -tdx
     KERNEL_PATCHES += $(shell find patches-tee/ -name "0*.patch" | sort)
+    WINDOWS_DEF_VARIANT = -tee
 endif
 
-HOSTARCH = $(shell uname -m)
+HOSTARCH = $(shell uname -m 2>/dev/null || echo x86_64)
+HOSTOS = $(shell uname -s 2>/dev/null || echo Windows_NT)
+WINDOWS_HOST = $(findstring MINGW,$(HOSTOS))$(findstring MSYS,$(HOSTOS))$(findstring CYGWIN,$(HOSTOS))$(filter Windows_NT,$(HOSTOS))
 ifeq ($(origin OS),command line)
     # Use the explicit OS value from command line (e.g. make OS=Windows)
 else
-    OS := $(shell uname -s)
+UNAME_S = $(HOSTOS)
+ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
+	OS = Windows
+else ifeq ($(findstring MSYS,$(UNAME_S)),MSYS)
+	OS = Windows
+else ifeq ($(findstring CYGWIN,$(UNAME_S)),CYGWIN)
+	OS = Windows
+else ifeq ($(UNAME_S),Windows_NT)
+	OS = Windows
+else
+	OS = $(UNAME_S)
+endif
 endif
 ifeq ($(ARCH),)
 	GUESTARCH := $(HOSTARCH)
@@ -46,7 +63,6 @@ else
 endif
 
 ifeq ($(OS),Windows)
-    CC := x86_64-w64-mingw32-gcc
     VARIANT := -windows
 endif
 
@@ -68,14 +84,29 @@ KRUNFW_SONAME_Darwin = libkrunfw.$(ABI_VERSION).dylib
 KRUNFW_BASE_Darwin = libkrunfw.dylib
 SONAME_Darwin =
 
-KRUNFW_BINARY_Windows = libkrunfw.dll
-KRUNFW_SONAME_Windows = libkrunfw.dll
-KRUNFW_BASE_Windows = libkrunfw.dll
-SONAME_Windows =
+KRUNFW_BINARY_Windows = libkrunfw$(VARIANT).dll
+KRUNFW_IMPLIB_Windows = libkrunfw$(VARIANT).lib
+KRUNFW_DEF_Windows = libkrunfw$(WINDOWS_DEF_VARIANT).def
 
 LIBDIR_Linux = $(shell if [ -e /etc/debian_version ]; then echo 'lib/$(HOSTARCH)-linux-gnu'; else echo lib64; fi)
 LIBDIR_Darwin = lib
 LIBDIR_Windows = bin
+
+ifeq ($(OS),Windows)
+WINDOWS_TOOLCHAIN ?= msvc
+WINDOWS_SECTION_ALIGN = 65536
+ifeq ($(WINDOWS_TOOLCHAIN),msvc)
+ifeq ($(origin CC),default)
+	CC = cl
+endif
+	WINDOWS_SHARED_CMD = $(CC) /nologo /LD /DABI_VERSION=$(ABI_VERSION) /Fe:$@ $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) /link /DEF:$(KRUNFW_DEF_Windows) /IMPLIB:$(KRUNFW_IMPLIB_Windows) /ALIGN:$(WINDOWS_SECTION_ALIGN) /SECTION:.krunfw,R,ALIGN=$(WINDOWS_SECTION_ALIGN)
+else
+ifeq ($(origin CC),default)
+	CC = x86_64-w64-mingw32-gcc
+endif
+	WINDOWS_SHARED_CMD = $(CC) -DABI_VERSION=$(ABI_VERSION) -shared -Wl,--section-alignment,$(WINDOWS_SECTION_ALIGN) -o $@ $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) $(KRUNFW_DEF_Windows)
+endif
+endif
 
 ifeq ($(PREFIX),)
     PREFIX := /usr/local
@@ -100,7 +131,7 @@ all: $(KRUNFW_BINARY_$(OS))
 
 $(KERNEL_TARBALL):
 	@mkdir -p tarballs
-	curl $(KERNEL_REMOTE) -o $(KERNEL_TARBALL)
+	curl --fail --location --retry 5 --retry-delay 2 $(KERNEL_REMOTE) -o $(KERNEL_TARBALL)
 
 $(KERNEL_SOURCES): $(KERNEL_TARBALL)
 	tar xf $(KERNEL_TARBALL)
@@ -111,10 +142,19 @@ $(KERNEL_SOURCES): $(KERNEL_TARBALL)
 $(KERNEL_BINARY_$(GUESTARCH)): $(KERNEL_SOURCES)
 	cd $(KERNEL_SOURCES) ; rm -f .version ; $(MAKE) $(MAKEFLAGS) $(KERNEL_FLAGS)
 
-ifeq ($(OS),Darwin)
+ifeq ($(OS),Windows)
+ifneq ($(WINDOWS_HOST),)
 $(KERNEL_C_BUNDLE):
-	@echo "Building on macOS, using ./build_on_krunvm.sh"
-	./build_on_krunvm.sh
+	$(error Windows builds consume an existing kernel.c generated on Linux)
+else
+$(KERNEL_C_BUNDLE): $(KERNEL_BINARY_$(GUESTARCH))
+	@echo "Generating $(KERNEL_C_BUNDLE) from $(KERNEL_BINARY_$(GUESTARCH))..."
+	@python3 bin2cbundle.py --os $(OS) -t $(KBUNDLE_TYPE_$(GUESTARCH)) $(KERNEL_BINARY_$(GUESTARCH)) kernel.c
+endif
+else ifeq ($(OS),Darwin)
+$(KERNEL_C_BUNDLE):
+	@echo "Building on macOS, using ./build_in_docker.sh"
+	./build_in_docker.sh
 else
 $(KERNEL_C_BUNDLE): $(KERNEL_BINARY_$(GUESTARCH))
 	@echo "Generating $(KERNEL_C_BUNDLE) from $(KERNEL_BINARY_$(GUESTARCH))..."
@@ -141,10 +181,11 @@ $(INITRD_C_BUNDLE): $(INITRD_BINARY)
 	@python3 bin2cbundle.py -t initrd $(INITRD_BINARY) initrd.c
 endif
 
-$(KRUNFW_BINARY_$(OS)): $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE)
 ifeq ($(OS),Windows)
-	$(CC) -shared -DABI_VERSION=$(ABI_VERSION) -O2 -o $@ $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) -Wl,--kill-at -Wl,--nxcompat
+$(KRUNFW_BINARY_$(OS)): $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) $(KRUNFW_DEF_Windows)
+	$(WINDOWS_SHARED_CMD)
 else
+$(KRUNFW_BINARY_$(OS)): $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE)
 	$(CC) -fPIC -DABI_VERSION=$(ABI_VERSION) -shared $(SONAME_$(OS)) -o $@ $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE)
 ifeq ($(OS),Linux)
 	$(STRIP) $(KRUNFW_BINARY_$(OS))
@@ -163,4 +204,4 @@ else
 endif
 
 clean:
-	rm -fr $(KERNEL_SOURCES) $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) $(KRUNFW_BINARY_$(OS))
+	rm -fr $(KERNEL_SOURCES) $(KERNEL_C_BUNDLE) $(QBOOT_C_BUNDLE) $(INITRD_C_BUNDLE) $(KRUNFW_BINARY_$(OS)) $(KRUNFW_IMPLIB_$(OS))

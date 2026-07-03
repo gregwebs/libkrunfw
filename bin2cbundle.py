@@ -9,7 +9,18 @@ AARCH64_LOAD_ADDR = '0x80000000'
 
 def write_header(ofile, bundle_name, page_size):
     ofile.write('#include <stddef.h>\n')
-    ofile.write('__attribute__ ((aligned ({}))) char {}_BUNDLE[] = \n"'.format(page_size, bundle_name))
+    ofile.write('#if defined(_WIN32) && defined(_MSC_VER)\n')
+    ofile.write('#pragma section(".krunfw", read)\n')
+    ofile.write('#define KRUNFW_EXPORT __declspec(dllexport)\n')
+    ofile.write('#define KRUNFW_BUNDLE_STORAGE __declspec(allocate(".krunfw"))\n')
+    ofile.write('#elif defined(_WIN32)\n')
+    ofile.write('#define KRUNFW_EXPORT __declspec(dllexport)\n')
+    ofile.write('#define KRUNFW_BUNDLE_STORAGE __attribute__((section(".krunfw"), aligned({})))\n'.format(page_size))
+    ofile.write('#else\n')
+    ofile.write('#define KRUNFW_EXPORT __attribute__((visibility("default")))\n')
+    ofile.write('#define KRUNFW_BUNDLE_STORAGE __attribute__((aligned({})))\n'.format(page_size))
+    ofile.write('#endif\n')
+    ofile.write('KRUNFW_BUNDLE_STORAGE char {}_BUNDLE[] = \n"'.format(bundle_name))
 
 
 def write_padding(ofile, padding, col):
@@ -91,7 +102,7 @@ def write_raw_cbundle(ifile, ofile, page_size) -> int:
     
 def write_footer_generic(ofile, bundle_name):
     footer = """
-char * krunfw_get_{}(size_t *size)
+KRUNFW_EXPORT char * krunfw_get_{}(size_t *size)
 {{
     *size = sizeof({}_BUNDLE) - 1;
     return &{}_BUNDLE[0];
@@ -103,7 +114,7 @@ char * krunfw_get_{}(size_t *size)
     
 def write_footer_kernel(ofile, load_addr, entry_addr):
     footer = """
-char * krunfw_get_kernel(size_t *load_addr, size_t *entry_addr, size_t *size)
+KRUNFW_EXPORT char * krunfw_get_kernel(size_t *load_addr, size_t *entry_addr, size_t *size)
 {{
     *load_addr = {};
     *entry_addr = {};
@@ -111,7 +122,7 @@ char * krunfw_get_kernel(size_t *load_addr, size_t *entry_addr, size_t *size)
     return &KERNEL_BUNDLE[0];
 }}
 
-int krunfw_get_version()
+KRUNFW_EXPORT int krunfw_get_version()
 {{
     return ABI_VERSION;
 }}

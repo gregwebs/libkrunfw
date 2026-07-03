@@ -2,7 +2,15 @@ __pycache__
 *.pyc
 *~
 libkrunfw.so*
+*.dylib
+*.dll
+*.exp
+*.lib
+*.obj
+*.pdb
 kernel.c
+qboot.c
+initrd.c
 vmlinux
 /tarballs
 /linux-*

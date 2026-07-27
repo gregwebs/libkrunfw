@@ -1,4 +1,4 @@
-KERNEL_VERSION = linux-6.12.96
+KERNEL_VERSION = linux-6.12.98
 # Static release tarball from the kernel.org CDN: reliable and cached, unlike the
 # git.kernel.org cgit snapshot endpoint, which regenerates a ~250MB tarball per
 # request and 502s under CI load.

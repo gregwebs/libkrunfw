@@ -1,6 +1,6 @@
-KERNEL_VERSION = linux-6.12.96
-# Fetch stable snapshots directly so HTTP errors are visible instead of cached as tarballs.
-KERNEL_REMOTE = https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/snapshot/$(KERNEL_VERSION).tar.gz
+KERNEL_VERSION = linux-6.12.98
+# Kernel source from the kernel.org CDN (static release tarball).
+KERNEL_REMOTE = https://cdn.kernel.org/pub/linux/kernel/v6.x/$(KERNEL_VERSION).tar.gz
 KERNEL_TARBALL = tarballs/$(KERNEL_VERSION).tar.gz
 KERNEL_SOURCES = $(KERNEL_VERSION)
 KERNEL_PATCHES = $(shell find patches/ -name "0*.patch" | sort)

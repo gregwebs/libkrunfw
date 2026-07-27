@@ -433,7 +433,7 @@ index 3a996272764b..a7e9bcc49a8e 100644
 +	src_cid = t_ops->transport.get_local_cid();
 +	src_port = vsk->local_addr.svm_port;
 +
-+	skb = virtio_transport_alloc_skb(&info, dgram_len, false,
++	skb = virtio_transport_alloc_skb(&info, dgram_len, false, NULL,
 +					 src_cid, src_port,
 +					 remote_addr->svm_cid,
 +					 remote_addr->svm_port);

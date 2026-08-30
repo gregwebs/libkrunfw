@@ -42,15 +42,36 @@ sudo make SEV=1 install
 
 #### Requirements
 
-Compiling a Linux kernel natively on macOS is not an easy feat. For this reason, the recommended way for building ```libkrunfw``` in this platform is by already having installed a binary version of [krunvm](https://github.com/containers/krunvm) and its dependencies ([libkrun](https://github.com/containers/libkrun), and ```libkrunfw``` itself), such as the one available in the [krunvm Homebrew repo](https://github.com/slp/homebrew-krun), and then executing the [build_on_krunvm.sh](build_on_krunvm.sh) script found in this repository.
+Compiling a Linux kernel natively on macOS is not practical. Use the
+[Apple Container or Docker native-storage flow](#building-the-kernel-bundle-with-apple-container-or-docker)
+below for the kernel bundle. `build_on_krunvm.sh` remains an alternative for
+installations that already use [krunvm](https://github.com/containers/krunvm)
+and its dependencies.
 
-This will create a lightweight Linux VM using ```krunvm``` with the current working directory mapped inside it, and build the kernel on it.
-
-#### Building the library using krunvm
+#### Alternative: building the library using krunvm
 ```
 ./build_on_krunvm.sh
 make
 ```
+
+#### Building the kernel bundle with Apple Container or Docker
+
+`build_in_docker.sh` keeps its historical name for callers, but builds the
+kernel source on container-native Linux storage. It archives the checkout,
+copies that snapshot into `/work`, and copies only the completed `kernel.c`
+back. It never extracts a Linux tree on a macOS bind mount.
+
+```sh
+# auto prefers Apple's CLI when installed, then Docker
+./build_in_docker.sh
+# select one backend without fallback
+LIBKRUNFW_BUILD_BACKEND=container ./build_in_docker.sh
+LIBKRUNFW_BUILD_BACKEND=docker ./build_in_docker.sh
+```
+
+Start the Apple service with `container system start` when required. Docker
+remains a compatible fallback. The selected backend must be running; an
+explicit selection never changes engines silently.
 
 By default, the build environment is based on a Fedora image. There is also a Debian variant which can be selected by setting the `BUILDER` environment variable.
 

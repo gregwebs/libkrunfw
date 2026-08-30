@@ -88,8 +88,8 @@ make_fixture() {
 
 run_helper() {
     PATH="$FIXTURE/bin:/usr/bin:/bin" FAKE_LOG="$FIXTURE/log" FAKE_ARCHIVE="$FIXTURE/archive" \
-        LIBKRUNFW_BUILD_BACKEND="$1" "$FIXTURE/space source/build_in_docker.sh" \
-        >"$FIXTURE/out" 2>"$FIXTURE/err"
+        LIBKRUNFW_BUILD_BACKEND="$1" LIBKRUNFW_BUILD_DNS="${2:-}" \
+        "$FIXTURE/space source/build_in_docker.sh" >"$FIXTURE/out" 2>"$FIXTURE/err"
 }
 
 assert_filtered_archive() {
@@ -119,6 +119,7 @@ assert_common_transport() {
     assert_not_contains "$FIXTURE/log" '<-v>'
     assert_not_contains "$FIXTURE/log" '<--volume>'
     assert_not_contains "$FIXTURE/log" '<--mount>'
+    assert_not_contains "$FIXTURE/log" '<--dns>'
     assert_contains "$FIXTURE/out" 'Uploading filtered source snapshot'
     assert_contains "$FIXTURE/out" 'container-native /work'
     assert_contains "$FIXTURE/out" 'Publishing kernel.c result'
@@ -138,6 +139,24 @@ make_fixture docker docker
 run_helper docker
 assert_contains "$FIXTURE/log" 'docker <info>'
 assert_common_transport docker cp rm
+
+# DNS remains inherited by default. A caller may opt in to one validated
+# resolver for a broken container runtime without hardcoding a public DNS.
+make_fixture container-dns container
+run_helper container 1.1.1.1
+assert_contains "$FIXTURE/log" '<--dns> <1.1.1.1>'
+assert_not_contains "$FIXTURE/out" 'DNS override'
+
+make_fixture docker-dns docker
+run_helper docker 192.0.2.53
+assert_contains "$FIXTURE/log" '<--dns> <192.0.2.53>'
+
+for invalid_dns in resolver.example 999.1.1.1; do
+    make_fixture "invalid-dns-$invalid_dns" container
+    if run_helper container "$invalid_dns"; then fail "invalid DNS override $invalid_dns unexpectedly succeeded"; fi
+    assert_contains "$FIXTURE/err" 'LIBKRUNFW_BUILD_DNS must be an IPv4 address'
+    assert_not_contains "$FIXTURE/log" 'container <run>'
+done
 
 # auto prefers Apple Container, but uses Docker when Container is not installed.
 make_fixture auto-container 'container docker'

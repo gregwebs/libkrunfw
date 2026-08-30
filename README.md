@@ -73,6 +73,17 @@ Start the Apple service with `container system start` when required. Docker
 remains a compatible fallback. The selected backend must be running; an
 explicit selection never changes engines silently.
 
+The helper inherits the container runtime's DNS by default. If that runtime
+has a known resolver failure, opt in to one IPv4 resolver for this build only:
+
+```sh
+LIBKRUNFW_BUILD_BACKEND=container LIBKRUNFW_BUILD_DNS=1.1.1.1 ./build_in_docker.sh
+```
+
+`LIBKRUNFW_BUILD_DNS` is intentionally unset by default; the helper never
+chooses a public resolver. It is passed only as the selected builder's `--dns`
+argument and rejects host names or invalid IPv4 addresses.
+
 By default, the build environment is based on a Fedora image. There is also a Debian variant which can be selected by setting the `BUILDER` environment variable.
 
 ```

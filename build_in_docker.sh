@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)"
 readonly SCRIPT_PATH
 readonly BACKEND_REQUEST="${LIBKRUNFW_BUILD_BACKEND:-auto}"
+readonly BUILD_DNS="${LIBKRUNFW_BUILD_DNS:-}"
 readonly IMAGE="fedora:latest"
 CONTAINER_NAME="libkrunfw-builder-$$-$(date +%s)"
 readonly CONTAINER_NAME
@@ -40,6 +41,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+validate_dns_override() {
+    local octet
+    local -a octets
+
+    [[ -z "$BUILD_DNS" ]] && return
+    [[ "$BUILD_DNS" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || fail "LIBKRUNFW_BUILD_DNS must be an IPv4 address (got $BUILD_DNS)"
+    IFS=. read -r -a octets <<<"$BUILD_DNS"
+    for octet in "${octets[@]}"; do
+        ((10#$octet <= 255)) || fail "LIBKRUNFW_BUILD_DNS must be an IPv4 address (got $BUILD_DNS)"
+    done
+}
+
 select_backend() {
     case "$BACKEND_REQUEST" in
         auto)
@@ -65,10 +78,13 @@ select_backend() {
 }
 
 run_builder() {
+    local -a run_options=(--detach --name "$CONTAINER_NAME")
+    [[ -z "$BUILD_DNS" ]] || run_options+=(--dns "$BUILD_DNS")
+
     if [[ "$backend" == container ]]; then
-        container run --detach --name "$CONTAINER_NAME" "$IMAGE" /usr/bin/sleep infinity >/dev/null
+        container run "${run_options[@]}" "$IMAGE" /usr/bin/sleep infinity >/dev/null
     else
-        docker run --detach --name "$CONTAINER_NAME" "$IMAGE" /usr/bin/sleep infinity >/dev/null
+        docker run "${run_options[@]}" "$IMAGE" /usr/bin/sleep infinity >/dev/null
     fi
 }
 
@@ -119,6 +135,7 @@ create_source_archive() {
 }
 
 main() {
+    validate_dns_override
     select_backend
     candidate_path="$(mktemp "$SCRIPT_PATH/.kernel.c.next.XXXXXX")"
     rm -f "$candidate_path"

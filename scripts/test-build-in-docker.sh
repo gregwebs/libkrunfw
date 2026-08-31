@@ -178,9 +178,13 @@ if run_helper container; then fail 'unavailable selected container unexpectedly 
 assert_contains "$FIXTURE/err" 'Apple container CLI is unavailable'
 assert_not_contains "$FIXTURE/log" 'docker <'
 
+# Hosted CI exposes a real Docker binary under /usr/bin, unlike many local
+# macOS setups. Shadow it with a stopped adapter so this contract never leaks
+# to a host daemon while still proving explicit Docker does not fall back.
 make_fixture unavailable-docker container
-if run_helper docker; then fail 'unavailable selected Docker unexpectedly succeeded'; fi
-assert_contains "$FIXTURE/err" 'Docker is unavailable'
+make_adapter docker
+if FAKE_FAIL=info run_helper docker; then fail 'unavailable selected Docker unexpectedly succeeded'; fi
+assert_contains "$FIXTURE/err" 'Docker daemon is unavailable'
 assert_not_contains "$FIXTURE/log" 'container <'
 
 make_fixture stopped-container container

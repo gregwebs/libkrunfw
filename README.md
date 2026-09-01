@@ -57,9 +57,11 @@ make
 #### Building the kernel bundle with Apple Container or Docker
 
 `build_in_docker.sh` keeps its historical name for callers, but builds the
-kernel source on container-native Linux storage. It archives the checkout,
-copies that snapshot into `/work`, and copies only the completed `kernel.c`
-back. It never extracts a Linux tree on a macOS bind mount.
+kernel source on container-native Linux storage. It streams a filtered checkout
+into one attached `run --rm`, extracts and builds it in `/work`, and
+bind-mounts only an isolated output staging directory to publish `kernel.c`.
+The checkout is never used as Linux kernel build storage, and a failed build
+does not replace an existing regular `kernel.c`.
 
 ```sh
 # auto prefers Apple's CLI when installed, then Docker

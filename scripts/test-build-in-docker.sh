@@ -15,6 +15,9 @@ assert_count() {
     actual="$(grep -Fc -- "$pattern" "$file" || :)"
     [[ "$actual" == "$expected" ]] || fail "expected $expected occurrences of $pattern in $file, found $actual"
 }
+assert_no_staging() {
+    ! find "$FIXTURE/space source" -maxdepth 1 -name '.libkrunfw-output.*' -print -quit | grep -q . || fail 'output staging was not cleaned'
+}
 
 make_adapter() {
     local adapter="$1"
@@ -33,28 +36,36 @@ case "$(basename "$0")/$command" in
         [[ "${FAKE_FAIL:-}" != info ]] || exit 22
         ;;
     container/run|docker/run)
-        [[ "${FAKE_FAIL:-}" != run ]] || exit 23
-        ;;
-    container/exec|docker/exec)
-        [[ "${FAKE_FAIL:-}" != exec ]] || exit 24
-        ;;
-    container/copy|docker/cp)
-        if [[ "$2" == *:/work/kernel.c ]]; then
-            [[ "${FAKE_FAIL:-}" != copy-out ]] || exit 25
-            case "${FAKE_OUTPUT_TYPE:-regular}" in
-                regular) printf 'kernel bundle\n' >"$3" ;;
-                symlink) ln -s /dev/null "$3" ;;
-                directory) mkdir "$3" ;;
-                *) exit 28 ;;
+        [[ "${FAKE_FAIL:-}" != run-early ]] || exit 23
+        shift
+        interactive=false
+        remove_when_finished=false
+        volumes=()
+        while [[ "$1" == --* ]]; do
+            case "$1" in
+                --rm) remove_when_finished=true; shift ;;
+                --interactive) interactive=true; shift ;;
+                --dns|--volume) option="$1"; value="$2"; shift 2; [[ "$option" == --volume ]] && volumes+=("$value") ;;
+                *) exit 27 ;;
             esac
-        else
-            [[ "${FAKE_FAIL:-}" != copy-in ]] || exit 26
-            tar -tf "$2" >"$FAKE_ARCHIVE"
-        fi
+        done
+        [[ "$remove_when_finished" == true && "$interactive" == true ]] || exit 28
+        [[ "${#volumes[@]}" == 1 && "${volumes[0]}" == *:/output ]] || exit 29
+        output_dir="${volumes[0]%:/output}"
+        [[ -n "$output_dir" ]] || exit 30
+        [[ "$1" == fedora:latest && "$2" == /bin/bash && "$3" == -lc ]] || exit 31
+        /usr/bin/tar -tf - >"$FAKE_ARCHIVE"
+        [[ "${FAKE_FAIL:-}" != run-late ]] || exit 24
+        case "${FAKE_OUTPUT_TYPE:-regular}" in
+            regular) printf 'kernel bundle\n' >"$output_dir/kernel.c" ;;
+            missing) ;;
+            empty) : >"$output_dir/kernel.c" ;;
+            symlink) ln -s /dev/null "$output_dir/kernel.c" ;;
+            directory) mkdir "$output_dir/kernel.c" ;;
+            *) exit 32 ;;
+        esac
         ;;
-    container/delete|docker/rm)
-        ;;
-    *) exit 27 ;;
+    *) exit 33 ;;
 esac
 SH
     chmod +x "$FIXTURE/bin/$adapter"
@@ -97,48 +108,48 @@ assert_filtered_archive() {
     assert_contains "$FIXTURE/archive" './tarballs/linux.tar.gz'
     for excluded in './kernel.c' linux-stale .git qboot.c initrd.c vmlinux \
         libkrunfw.5.dylib libkrunfw.so.5.6.1 libkrunfw.dll libkrunfw.lib libkrunfw.exp \
-        libkrunfw.obj libkrunfw.pdb .kernel.c.next.stale; do
+        libkrunfw.obj libkrunfw.pdb .kernel.c.next.stale .libkrunfw-output.; do
         assert_not_contains "$FIXTURE/archive" "$excluded"
     done
 }
 
 assert_common_transport() {
-    local adapter="$1" copy_command="$2" delete_command="$3"
-    assert_contains "$FIXTURE/log" "$adapter <run> <--detach>"
-    assert_contains "$FIXTURE/log" '<--name>'
-    assert_contains "$FIXTURE/log" '</usr/bin/sleep> <infinity>'
-    assert_contains "$FIXTURE/log" "$adapter <exec>"
-    assert_contains "$FIXTURE/log" '</usr/bin/true>'
-    assert_contains "$FIXTURE/log" '/work'
+    local adapter="$1"
+    assert_count 1 "$adapter <run>" "$FIXTURE/log"
+    assert_contains "$FIXTURE/log" "$adapter <run> <--rm> <--interactive>"
+    assert_contains "$FIXTURE/log" '<--volume>'
+    assert_contains "$FIXTURE/log" ':/output>'
+    assert_not_contains "$FIXTURE/log" '<--detach>'
+    assert_not_contains "$FIXTURE/log" '<--name>'
+    assert_not_contains "$FIXTURE/log" '<exec>'
+    assert_not_contains "$FIXTURE/log" '<copy>'
+    assert_not_contains "$FIXTURE/log" '<cp>'
+    assert_not_contains "$FIXTURE/log" '<delete>'
+    assert_not_contains "$FIXTURE/log" '<rm>'
+    assert_not_contains "$FIXTURE/log" ':/work>'
+    assert_contains "$FIXTURE/log" 'tar -xf - -C /work'
     # shellcheck disable=SC2016 # The container program must retain this literal expansion.
     assert_contains "$FIXTURE/log" 'make -j"$(nproc)" kernel.c'
-    assert_count 1 ':/tmp/libkrunfw-source.tar' "$FIXTURE/log"
-    assert_count 1 ':/work/kernel.c' "$FIXTURE/log"
-    assert_contains "$FIXTURE/log" "$adapter <$copy_command>"
-    assert_contains "$FIXTURE/log" "$adapter <$delete_command> <--force>"
-    assert_not_contains "$FIXTURE/log" '<-v>'
-    assert_not_contains "$FIXTURE/log" '<--volume>'
-    assert_not_contains "$FIXTURE/log" '<--mount>'
+    assert_contains "$FIXTURE/log" 'cp kernel.c /output/kernel.c'
     assert_not_contains "$FIXTURE/log" '<--dns>'
-    assert_contains "$FIXTURE/out" 'Uploading filtered source snapshot'
     assert_contains "$FIXTURE/out" 'container-native /work'
     assert_contains "$FIXTURE/out" 'Publishing kernel.c result'
     assert_filtered_archive
     [[ "$(cat "$FIXTURE/space source/kernel.c")" == 'kernel bundle' ]] || fail 'kernel.c was not published'
-    ! find "$FIXTURE/space source" -maxdepth 1 -name '.kernel.c.next.*' ! -name '.kernel.c.next.stale' -print -quit | grep -q . || fail 'candidate output was not cleaned'
+    assert_no_staging
 }
 
-# Explicit selectors use their requested backend and both share the same
-# archive-to-/work-to-one-artifact public transport contract.
+# Explicit selectors use their requested backend and both share the one-shot
+# stdin-to-/work-to-one-artifact public transport contract.
 make_fixture container container
 run_helper container
 assert_contains "$FIXTURE/log" 'container <system> <status>'
-assert_common_transport container copy delete
+assert_common_transport container
 
 make_fixture docker docker
 run_helper docker
 assert_contains "$FIXTURE/log" 'docker <info>'
-assert_common_transport docker cp rm
+assert_common_transport docker
 
 # DNS remains inherited by default. A caller may opt in to one validated
 # resolver for a broken container runtime without hardcoding a public DNS.
@@ -188,42 +199,61 @@ assert_contains "$FIXTURE/err" 'Docker daemon is unavailable'
 assert_not_contains "$FIXTURE/log" 'container <'
 
 make_fixture stopped-container container
-if PATH="$FIXTURE/bin:/usr/bin:/bin" FAKE_LOG="$FIXTURE/log" FAKE_ARCHIVE="$FIXTURE/archive" FAKE_FAIL=status LIBKRUNFW_BUILD_BACKEND=container "$FIXTURE/space source/build_in_docker.sh" >"$FIXTURE/out" 2>"$FIXTURE/err"; then
-    fail 'stopped container service unexpectedly succeeded'
-fi
+if FAKE_FAIL=status run_helper container; then fail 'stopped container service unexpectedly succeeded'; fi
 assert_contains "$FIXTURE/err" "container system start"
 
 make_fixture stopped-docker docker
-if PATH="$FIXTURE/bin:/usr/bin:/bin" FAKE_LOG="$FIXTURE/log" FAKE_ARCHIVE="$FIXTURE/archive" FAKE_FAIL=info LIBKRUNFW_BUILD_BACKEND=docker "$FIXTURE/space source/build_in_docker.sh" >"$FIXTURE/out" 2>"$FIXTURE/err"; then
-    fail 'stopped Docker daemon unexpectedly succeeded'
-fi
+if FAKE_FAIL=info run_helper docker; then fail 'stopped Docker daemon unexpectedly succeeded'; fi
 assert_contains "$FIXTURE/err" 'start Docker Desktop'
 
-# Every lifecycle failure preserves an existing result and deletes only the
-# helper's uniquely named container. The fake does not model unrelated names.
-for failure in run exec copy-in copy-out; do
+# Either side of the streaming pipeline can fail without replacing the prior
+# result, and helper-owned output staging is always removed.
+for failure in run-early run-late; do
     make_fixture "failure-$failure" container
     printf 'prior kernel\n' >"$FIXTURE/space source/kernel.c"
-    if PATH="$FIXTURE/bin:/usr/bin:/bin" FAKE_LOG="$FIXTURE/log" FAKE_ARCHIVE="$FIXTURE/archive" FAKE_FAIL="$failure" LIBKRUNFW_BUILD_BACKEND=container "$FIXTURE/space source/build_in_docker.sh" >"$FIXTURE/out" 2>"$FIXTURE/err"; then
-        fail "$failure failure unexpectedly succeeded"
-    fi
+    if FAKE_FAIL="$failure" run_helper container; then fail "$failure failure unexpectedly succeeded"; fi
     [[ "$(cat "$FIXTURE/space source/kernel.c")" == 'prior kernel' ]] || fail "$failure replaced prior kernel.c"
-    if [[ "$failure" != run ]]; then
-        assert_contains "$FIXTURE/log" 'container <delete> <--force>'
-    fi
-    ! find "$FIXTURE/space source" -maxdepth 1 -name '.kernel.c.next.*' ! -name '.kernel.c.next.stale' -print -quit | grep -q . || fail "$failure left a candidate output"
+    assert_no_staging
 done
 
-# Result copy must be a nonempty regular file. Malformed copy results leave the
-# previously published kernel untouched and remove all helper-owned staging.
-for output_type in symlink directory; do
+# A shadowed source tar producer proves pipefail catches producer failure; the
+# fake runtime inspects input with /usr/bin/tar and cannot mask this result.
+make_fixture producer-failure container
+cat >"$FIXTURE/bin/tar" <<'SH'
+#!/usr/bin/env bash
+/usr/bin/tar "$@"
+exit 33
+SH
+chmod +x "$FIXTURE/bin/tar"
+printf 'prior kernel\n' >"$FIXTURE/space source/kernel.c"
+if run_helper container; then fail 'producer failure unexpectedly succeeded'; fi
+assert_contains "$FIXTURE/archive" './Makefile'
+[[ "$(cat "$FIXTURE/space source/kernel.c")" == 'prior kernel' ]] || fail 'producer failure replaced prior kernel.c'
+assert_no_staging
+
+# Result publication accepts only a nonempty, non-symlink regular file.
+for output_type in missing empty symlink directory; do
     make_fixture "malformed-$output_type" container
     printf 'prior kernel\n' >"$FIXTURE/space source/kernel.c"
-    if PATH="$FIXTURE/bin:/usr/bin:/bin" FAKE_LOG="$FIXTURE/log" FAKE_ARCHIVE="$FIXTURE/archive" FAKE_OUTPUT_TYPE="$output_type" LIBKRUNFW_BUILD_BACKEND=container "$FIXTURE/space source/build_in_docker.sh" >"$FIXTURE/out" 2>"$FIXTURE/err"; then
-        fail "$output_type output unexpectedly succeeded"
-    fi
+    if FAKE_OUTPUT_TYPE="$output_type" run_helper container; then fail "$output_type output unexpectedly succeeded"; fi
     [[ "$(cat "$FIXTURE/space source/kernel.c")" == 'prior kernel' ]] || fail "$output_type output replaced prior kernel.c"
-    ! find "$FIXTURE/space source" -maxdepth 1 -name '.kernel.c.next.*' ! -name '.kernel.c.next.stale' -print -quit | grep -q . || fail "$output_type output left a candidate"
+    assert_no_staging
 done
+
+# Publication works for absent and existing regular files, while a directory
+# target is rejected before the expensive runtime command starts.
+make_fixture absent-target container
+rm "$FIXTURE/space source/kernel.c"
+run_helper container
+[[ "$(cat "$FIXTURE/space source/kernel.c")" == 'kernel bundle' ]] || fail 'absent target was not published'
+assert_no_staging
+
+make_fixture directory-target container
+rm "$FIXTURE/space source/kernel.c"
+mkdir "$FIXTURE/space source/kernel.c"
+if run_helper container; then fail 'directory target unexpectedly succeeded'; fi
+assert_contains "$FIXTURE/err" 'kernel.c is a directory'
+assert_not_contains "$FIXTURE/log" 'container <run>'
+assert_no_staging
 
 echo 'build_in_docker contract: PASS'
